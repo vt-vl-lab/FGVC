@@ -3,7 +3,10 @@
 
 See the [project page](http://chengao.vision/FGVC/) for more details. The code will be released around mid-Nov.
 
-In the meantime, please check out our [teaser video](https://filebox.ece.vt.edu/~jbhuang/images/projects/ECCV%202020%20VideoCompletion.mp4)
+In the meantime, please check out our teaser video
+
+
+[![teaser video](https://filebox.ece.vt.edu/~jbhuang/images/projects/ECCV%202020%20VideoCompletion%20title.jpg)](https://filebox.ece.vt.edu/~jbhuang/images/projects/ECCV%202020%20VideoCompletion.mp4)
 
 ### Citation
 
