@@ -1,6 +1,6 @@
 # Flow-edge Guided Video Completion
 
-See the [project page](http://chengao.vision/FGVC/) for more details. The code will be released around late-Nov.
+See the [project page](http://chengao.vision/FGVC/) for more details. We will work hard on making the code available (tentative date: late-Nov).
 
 In the meantime, please check out our fun teaser video.
 
