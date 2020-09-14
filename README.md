@@ -10,7 +10,7 @@ In the meantime, please check out our fun teaser video.
 
 Chen Gao, Ayush Saraf, Jia-Bin Huang, and Johannes Kopf. "Flow-edge Guided Video Completion", in European Conference on Computer Vision (ECCV), 2020
 
-If you find this code useful for your research, please consider citing the following papers:
+If you find this code useful for your research, please consider citing the following paper:
 
 	@inproceedings{Gao-ECCV-FGVC,
 	    author    = {Gao, Chen and Saraf, Ayush and Huang, Jia-Bin and Kopf, Johannes}, 
