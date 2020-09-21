@@ -10,7 +10,9 @@ We present a new flow-based video completion algorithm. Previous flow completion
 <br/>
 
 **[ECCV 2020] Flow-edge Guided Video Completion**
+<br/>
 [Chen Gao](http://chengao.vision), [Ayush Saraf](#), [Jia-Bin Huang](https://filebox.ece.vt.edu/~jbhuang/), and [Johannes Kopf](https://johanneskopf.de/)
+<br/>
 In European Conference on Computer Vision (ECCV), 2020
 
 ## Note from Chen
