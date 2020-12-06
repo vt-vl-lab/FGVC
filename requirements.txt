@@ -1,0 +1,6 @@
+opencv-python
+opencv-contrib-python
+imageio
+imageio-ffmpeg
+scipy
+scikit-image

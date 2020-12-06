@@ -151,9 +151,7 @@ def constructEquation(n, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, p
 
     # Boundary constraint
     Boundary = holeMask[qi_tmp[:, n], qj_tmp[:, n]] == 0
-
     valid = validNeighbor * NotEdge * Boundary
-
     J_tmp = pind[valid, :]
 
     # num of equations: len(J_tmp)

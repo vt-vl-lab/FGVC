@@ -15,22 +15,31 @@ We present a new flow-based video completion algorithm. Previous flow completion
 <br/>
 In European Conference on Computer Vision (ECCV), 2020
 
-## Note from Chen
-
-This is a beta version of the code. I will work on making the official code available (tentative date: late-Nov).
-
-
 ## Prerequisites
 
 - Linux (tested on CentOS Linux release 7.4.1708)
 - Anaconda
-- Python 3.6
-- PyTorch 0.4.0 (for DeepFill). Please set up another environment `FGVC` according to [this](https://github.com/nbei/Deep-Flow-Guided-Video-Inpainting#install--requirements).
-- PyTorch 1.6.0 (for RAFT). Please set up an environment `raft` according to [this](https://github.com/princeton-vl/RAFT#requirements).
+- Python 3.8 (tested on 3.8.5)
+- PyTorch 1.6.0
+
+and the Python dependencies listed in requirements.txt
+
+- To get started, please run the following commands:
+  ```
+  conda create -n FGVC
+  conda activate FGVC
+  conda install pytorch=1.6.0 torchvision=0.7.0 cudatoolkit=10.1 -c pytorch
+  conda install matplotlib scipy
+  pip install -r requirements.txt
+  ```
+
+- Next, please download the model weight and demo data using the following command:
+```
+chmod +x download_data_weights.sh
+./download_data_weights.sh
+```
 
 ## Quick start
-
-Always activate `raft` first. Run the code until you see a warning: 'Please switch to Pytorch 0.4.0'. Deactivate `raft`, activate `FGVC`, and run the code again.
 
 - Object removal:
 ```bash

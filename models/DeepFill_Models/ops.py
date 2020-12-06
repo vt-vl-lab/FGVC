@@ -1,5 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 import math
 import numpy as np
 import torch
@@ -254,7 +252,7 @@ class Contextual_Attention_Module(nn.Module):
         kernel = 2*self.rate
         raw_w = self.extract_patches(b, kernel=kernel, stride=self.rate)
         raw_w = raw_w.permute(0, 2, 3, 4, 5, 1)
-        raw_w = raw_w.contiguous().view(raw_int_bs[0], raw_int_bs[2] / self.rate, raw_int_bs[3] / self.rate, -1)
+        raw_w = raw_w.contiguous().view(raw_int_bs[0], raw_int_bs[2] // self.rate, raw_int_bs[3] // self.rate, -1)
         raw_w = raw_w.contiguous().view(raw_int_bs[0], -1, kernel, kernel, raw_int_bs[1])
         raw_w = raw_w.permute(0, 1, 4, 2, 3)
 
@@ -270,7 +268,7 @@ class Contextual_Attention_Module(nn.Module):
         int_bs = list(b.size())
         w = self.extract_patches(b)
         w = w.permute(0, 2, 3, 4, 5, 1)
-        w = w.contiguous().view(raw_int_bs[0], raw_int_bs[2] / self.rate, raw_int_bs[3] / self.rate, -1)
+        w = w.contiguous().view(raw_int_bs[0], raw_int_bs[2] // self.rate, raw_int_bs[3] // self.rate, -1)
         w = w.contiguous().view(raw_int_bs[0], -1, ksize, ksize, raw_int_bs[1])
         w = w.permute(0, 1, 4, 2, 3)
         # process mask
@@ -284,7 +282,7 @@ class Contextual_Attention_Module(nn.Module):
         m = self.extract_patches(mask)
 
         m = m.permute(0, 2, 3, 4, 5, 1)
-        m = m.contiguous().view(raw_int_bs[0], raw_int_bs[2]/self.rate, raw_int_bs[3]/self.rate, -1)
+        m = m.contiguous().view(raw_int_bs[0], raw_int_bs[2] // self.rate, raw_int_bs[3] // self.rate, -1)
         m = m.contiguous().view(raw_int_bs[0], -1, ksize, ksize, 1)
         m = m.permute(0, 4, 1, 2, 3)
 
@@ -346,8 +344,8 @@ class Contextual_Attention_Module(nn.Module):
             yi = yi * mm  # mask
 
             _, offset = torch.max(yi, dim=1) # argmax; index
-            division = torch.div(offset, fs[3]).long()
-            offset = torch.stack([division, torch.div(offset, fs[3])-division], dim=-1)
+            division = torch.true_divide(offset, fs[3]).long()
+            offset = torch.stack([division, torch.true_divide(offset, fs[3])-division], dim=-1)
 
             wi_center = raw_wi[0]
 
@@ -406,10 +404,10 @@ def down_sample(x, size=None, scale_factor=None, mode='nearest', device=None):
     if size is None: size = (int(scale_factor*x.size(2)), int(scale_factor*x.size(3)))
     # create coordinates
     # size_origin = [x.size[2], x.size[3]]
-    h = torch.arange(0, size[0]) / (size[0]) * 2 - 1
-    w = torch.arange(0, size[1]) / (size[1]) * 2 - 1
+    h = torch.true_divide(torch.arange(0, size[0]), (size[0])) * 2 - 1
+    w = torch.true_divide(torch.arange(0, size[1]), (size[1])) * 2 - 1
     # create grid
-    grid =torch.zeros(size[0],size[1],2)
+    grid = torch.zeros(size[0],size[1],2)
     grid[:,:,0] = w.unsqueeze(0).repeat(size[0],1)
     grid[:,:,1] = h.unsqueeze(0).repeat(size[1],1).transpose(0,1)
     # expand to match batch size
