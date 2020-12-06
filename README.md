@@ -34,10 +34,10 @@ and the Python dependencies listed in requirements.txt
   ```
 
 - Next, please download the model weight and demo data using the following command:
-```
-chmod +x download_data_weights.sh
-./download_data_weights.sh
-```
+  ```
+  chmod +x download_data_weights.sh
+  ./download_data_weights.sh
+  ```
 
 ## Quick start
 
@@ -81,3 +81,4 @@ If you find this code useful for your research, please consider citing the follo
 
 ## Acknowledgments
 - Our flow edge completion network builds upon [EdgeConnect](https://github.com/knazeri/edge-connect).
+- Our image inpainting network is modified from [DFVI](https://github.com/nbei/Deep-Flow-Guided-Video-Inpainting).
