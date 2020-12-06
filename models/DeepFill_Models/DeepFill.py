@@ -1,18 +1,16 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 from .ops import *
 
 
 class Generator(nn.Module):
-    def __init__(self, use_small_mask=1, first_dim=32, isCheck=False, device=None):
+    def __init__(self, first_dim=32, isCheck=False, device=None):
         super(Generator, self).__init__()
         self.isCheck = isCheck
         self.device = device
         self.stage_1 = CoarseNet(5, first_dim, device=device)
         self.stage_2 = RefinementNet(5, first_dim, device=device)
-        self.use_small_mask = use_small_mask
 
     def forward(self, masked_img, mask, small_mask): # mask : 1 x 1 x H x W
+
         # border, maybe
         mask = mask.expand(masked_img.size(0),1,masked_img.size(2),masked_img.size(3))
         small_mask = small_mask.expand(masked_img.size(0), 1, masked_img.size(2) // 8, masked_img.size(3) // 8)
@@ -21,21 +19,12 @@ class Generator(nn.Module):
         else:
             ones = to_var(torch.ones(mask.size()))
         # stage1
-        stage1_input = torch.cat([masked_img, ones, ones * mask], dim=1)
+        stage1_input = torch.cat([masked_img, ones, ones*mask], dim=1)
         stage1_output, resized_mask = self.stage_1(stage1_input, mask)
         # stage2
-        new_masked_img = stage1_output * mask.clone() + masked_img.clone() * (1. - mask.clone())
-        stage2_input = torch.cat([new_masked_img, ones.clone(), ones.clone() * mask.clone()], dim=1)
-
-        # if self.config.HAVE_SP == 2:
-        #     stage2_output, offset_flow = self.stage_2(stage2_input, resized_mask)
-        # else:
-        #     stage2_output, offset_flow = self.stage_2(stage2_input, small_mask)
-
-        if self.use_small_mask != 1:
-            stage2_output, offset_flow = self.stage_2(stage2_input, resized_mask)
-        else:
-            stage2_output, offset_flow = self.stage_2(stage2_input, small_mask)
+        new_masked_img = stage1_output*mask.clone() + masked_img.clone()*(1.-mask.clone())
+        stage2_input = torch.cat([new_masked_img, ones.clone(), ones.clone()*mask.clone()], dim=1)
+        stage2_output, offset_flow = self.stage_2(stage2_input, small_mask)
 
         return stage1_output, stage2_output, offset_flow
 
@@ -48,10 +37,10 @@ class CoarseNet(nn.Module):
     # after up : same with the input size
     '''
     def __init__(self, in_ch, out_ch, device=None):
-        super(CoarseNet, self).__init__()
+        super(CoarseNet,self).__init__()
         self.down = Down_Module(in_ch, out_ch)
-        self.atrous = Dilation_Module(out_ch * 4, out_ch * 4)
-        self.up = Up_Module(out_ch * 4, 3)
+        self.atrous = Dilation_Module(out_ch*4, out_ch*4)
+        self.up = Up_Module(out_ch*4, 3)
         self.device=device
 
     def forward(self, x, mask):
@@ -71,12 +60,12 @@ class RefinementNet(nn.Module):
     # after up : same with the input size
     '''
     def __init__(self, in_ch, out_ch, device=None):
-        super(RefinementNet, self).__init__()
+        super(RefinementNet,self).__init__()
         self.down_conv_branch = Down_Module(in_ch, out_ch, isRefine=True)
         self.down_attn_branch = Down_Module(in_ch, out_ch, activation=nn.ReLU(), isRefine=True, isAttn=True)
-        self.atrous = Dilation_Module(out_ch * 4, out_ch * 4)
-        self.CAttn = Contextual_Attention_Module(out_ch * 4, out_ch * 4, device=device)
-        self.up = Up_Module(out_ch * 8, 3, isRefine=True)
+        self.atrous = Dilation_Module(out_ch*4, out_ch*4)
+        self.CAttn = Contextual_Attention_Module(out_ch*4, out_ch*4, device=device)
+        self.up = Up_Module(out_ch*8, 3, isRefine=True)
 
     def forward(self, x, resized_mask):
         # conv branch
@@ -93,24 +82,3 @@ class RefinementNet(nn.Module):
         x = self.up(deconv_x)
 
         return x, offset_flow
-
-
-# class Discriminator(nn.Module):
-#     def __init__(self, first_dim=64):
-#         super(Discriminator,self).__init__()
-#         self.global_discriminator = Flatten_Module(3, first_dim, False)
-#         self.local_discriminator = Flatten_Module(3, first_dim, True)
-#
-#     def forward(self, global_x, local_x):
-#         global_y = self.global_discriminator(global_x)
-#         local_y = self.local_discriminator(local_x)
-#         return global_y, local_y # B x 256*(256 or 512)
-
-class Discriminator(nn.Module):
-    def __init__(self, first_dim=64):
-        super(Discriminator, self).__init__()
-        self.global_discriminator = Flatten_Module(3, first_dim, False)
-
-    def forward(self, global_x):
-        global_y = self.global_discriminator(global_x)
-        return global_y

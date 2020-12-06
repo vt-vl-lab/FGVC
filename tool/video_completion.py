@@ -24,7 +24,9 @@ from utils.Poisson_blend_img import Poisson_blend_img
 from get_flowNN import get_flowNN
 from get_flowNN_gradient import get_flowNN_gradient
 from utils.common_utils import flow_edge
-
+from spatial_inpaint import spatial_inpaint
+from frame_inpaint import DeepFillv1
+from edgeconnect.networks import EdgeGenerator_
 
 def to_tensor(img):
     img = Image.fromarray(img)
@@ -91,19 +93,19 @@ def calculate_flow(args, model, video, mode):
     nFrame, _, imgH, imgW = video.shape
     Flow = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
 
-    if os.path.isdir(os.path.join(args.outroot, 'flow', mode + '_flo')):
-        for flow_name in sorted(glob.glob(os.path.join(args.outroot, 'flow', mode + '_flo', '*.flo'))):
-            print("Loading {0}".format(flow_name), '\r', end='')
-            flow = utils.frame_utils.readFlow(flow_name)
-            Flow = np.concatenate((Flow, flow[..., None]), axis=-1)
-        return Flow
+    # if os.path.isdir(os.path.join(args.outroot, 'flow', mode + '_flo')):
+    #     for flow_name in sorted(glob.glob(os.path.join(args.outroot, 'flow', mode + '_flo', '*.flo'))):
+    #         print("Loading {0}".format(flow_name), '\r', end='')
+    #         flow = utils.frame_utils.readFlow(flow_name)
+    #         Flow = np.concatenate((Flow, flow[..., None]), axis=-1)
+    #     return Flow
 
     create_dir(os.path.join(args.outroot, 'flow', mode + '_flo'))
     create_dir(os.path.join(args.outroot, 'flow', mode + '_png'))
 
     with torch.no_grad():
         for i in range(video.shape[0] - 1):
-            print("Completing {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
+            print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
             if mode == 'forward':
                 # Flow i -> i + 1
                 image1 = video[i, None]
@@ -130,7 +132,6 @@ def calculate_flow(args, model, video, mode):
     return Flow
 
 
-
 def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori):
     """Prepares the data for video extrapolation.
     """
@@ -145,9 +146,6 @@ def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori):
     # Generates the mask for missing region.
     flow_mask = np.ones(((imgH_extr, imgW_extr)), dtype=np.bool)
     flow_mask[H_start : H_start + imgH, W_start : W_start + imgW] = 0
-
-    # NETFLIX wateremark.
-    # flow_mask[194 : 216, 862 : 930] = 1
 
     mask_dilated = gradient_mask(flow_mask)
 
@@ -177,14 +175,13 @@ def complete_flow(args, corrFlow, flow_mask, mode, edge=None):
 
     imgH, imgW, _, nFrame = corrFlow.shape
 
-    if os.path.isdir(os.path.join(args.outroot, 'flow_comp', mode + '_flo')):
-        compFlow = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-
-        for flow_name in sorted(glob.glob(os.path.join(args.outroot, 'flow_comp', mode + '_flo', '*.flo'))):
-            flow = utils.frame_utils.readFlow(flow_name)
-            compFlow = np.concatenate((compFlow, flow[..., None]), axis=-1)
-        return compFlow
-
+    # if os.path.isdir(os.path.join(args.outroot, 'flow_comp', mode + '_flo')):
+    #     compFlow = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    #     for flow_name in sorted(glob.glob(os.path.join(args.outroot, 'flow_comp', mode + '_flo', '*.flo'))):
+    #         print("Loading {0}".format(flow_name), '\r', end='')
+    #         flow = utils.frame_utils.readFlow(flow_name)
+    #         compFlow = np.concatenate((compFlow, flow[..., None]), axis=-1)
+    #     return compFlow
 
     create_dir(os.path.join(args.outroot, 'flow_comp', mode + '_flo'))
     create_dir(os.path.join(args.outroot, 'flow_comp', mode + '_png'))
@@ -192,7 +189,7 @@ def complete_flow(args, corrFlow, flow_mask, mode, edge=None):
     compFlow = np.zeros(((imgH, imgW, 2, nFrame)), dtype=np.float32)
 
     for i in range(nFrame):
-        print("Completing {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1))
+        print("Completing {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
         flow = corrFlow[:, :, :, i]
         flow_mask_img = flow_mask[:, :, i] if mode == 'forward' else flow_mask[:, :, i + 1]
         flow_mask_gradient_img = gradient_mask(flow_mask_img)
@@ -215,7 +212,7 @@ def complete_flow(args, corrFlow, flow_mask, mode, edge=None):
             imgSrc_gy = imgSrc_gy[0 : imgH - 1, :, :]
             imgSrc_gx = gradient[:, :, 0 : 2]
             imgSrc_gx = imgSrc_gx[:, 0 : imgW - 1, :]
-            compFlow[:, :, :, i] = Poisson_blend(flow, imgSrc_gx, imgSrc_gy, flow_mask_img, edge)
+            compFlow[:, :, :, i] = Poisson_blend(flow, imgSrc_gx, imgSrc_gy, flow_mask_img, edge[:, :, i])
 
         else:
             flow[:, :, 0] = rf.regionfill(flow[:, :, 0], flow_mask_img)
@@ -242,9 +239,9 @@ def edge_completion(args, EdgeGenerator, corrFlow, flow_mask, mode):
 
     imgH, imgW, _, nFrame = corrFlow.shape
     Edge = np.empty(((imgH, imgW, 0)), dtype=np.float32)
-    # create_dir(os.path.join(args.outroot, 'flow_edge', mode))
 
     for i in range(nFrame):
+        print("Completing {0} flow edge {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
         flow_mask_img = flow_mask[:, :, i] if mode == 'forward' else flow_mask[:, :, i + 1]
 
         flow_img_gray = (corrFlow[:, :, 0, i] ** 2 + corrFlow[:, :, 1, i] ** 2) ** 0.5
@@ -253,16 +250,14 @@ def edge_completion(args, EdgeGenerator, corrFlow, flow_mask, mode):
         edge_corr = canny(flow_img_gray, sigma=2, mask=(1 - flow_mask_img).astype(np.bool))
         edge_completed = infer(args, EdgeGenerator, torch.device('cuda:0'), flow_img_gray, edge_corr, flow_mask_img)
         Edge = np.concatenate((Edge, edge_completed[..., None]), axis=-1)
+
     return Edge
 
 
 def video_completion(args):
 
-    print('Pytorch 1.6.0 for flow prediction')
-    try:
-        RAFT_model = initialize_RAFT(args)
-    except:
-        RAFT_model = None
+    # Flow model.
+    RAFT_model = initialize_RAFT(args)
 
     # Loads frames.
     filename_list = glob.glob(os.path.join(args.path, '*.png')) + \
@@ -283,7 +278,7 @@ def video_completion(args):
     # Calcutes the corrupted flow.
     corrFlowF = calculate_flow(args, RAFT_model, video, 'forward')
     corrFlowB = calculate_flow(args, RAFT_model, video, 'backward')
-    print('\nFinish Calculating flow.')
+    print('\nFinish flow prediction.')
 
     # Makes sure video is in BGR (opencv) format.
     video = video.permute(2, 3, 1, 0).cpu().numpy()[:, :, ::-1, :] / 255.
@@ -321,41 +316,34 @@ def video_completion(args):
         flow_mask = np.stack(flow_mask, -1).astype(np.bool)
 
     if args.edge_guide:
-
-        print('Pytorch 1.6.0 for edge completion')
-        try:
-            from edgeconnect.networks import EdgeGenerator_
-            EdgeGenerator = EdgeGenerator_()
-            EdgeComp_ckpt = torch.load(args.edge_completion_model)
-            EdgeGenerator.load_state_dict(EdgeComp_ckpt['generator'])
-            EdgeGenerator.to(torch.device('cuda:0'))
-            EdgeGenerator.eval()
-        except:
-            EdgeGenerator = None
+        # Edge completion model.
+        EdgeGenerator = EdgeGenerator_()
+        EdgeComp_ckpt = torch.load(args.edge_completion_model)
+        EdgeGenerator.load_state_dict(EdgeComp_ckpt['generator'])
+        EdgeGenerator.to(torch.device('cuda:0'))
+        EdgeGenerator.eval()
 
         # Edge completion.
         FlowF_edge = edge_completion(args, EdgeGenerator, corrFlowF, flow_mask, 'forward')
         FlowB_edge = edge_completion(args, EdgeGenerator, corrFlowB, flow_mask, 'backward')
+        print('\nFinish edge completion.')
     else:
         FlowF_edge, FlowB_edge = None, None
 
     # Completes the flow.
     videoFlowF = complete_flow(args, corrFlowF, flow_mask, 'forward', FlowF_edge)
     videoFlowB = complete_flow(args, corrFlowB, flow_mask, 'backward', FlowB_edge)
+    print('\nFinish flow completion.')
 
     iter = 0
     mask_tofill = mask
     video_comp = video
 
-    try:
-        from spatial_inpaint import spatial_inpaint
-        from frame_inpaint import DeepFillv1
-        deepfill = DeepFillv1(pretrained_model='/home/chengao/Weight/imagenet_deepfill.pth', image_shape=[imgH, imgW])
-    except:
-        print('Please switch to Pytorch 0.4.0')
-        return
+    # Image inpainting model.
+    deepfill = DeepFillv1(pretrained_model=args.deepfill_model, image_shape=[imgH, imgW])
 
-    while((np.sum(mask_tofill) > 0) and iter <= 5):
+    # We iteratively complete the video.
+    while(np.sum(mask_tofill) > 0):
         create_dir(os.path.join(args.outroot, 'frame_comp_' + str(iter)))
 
         # Color propagation.
@@ -370,23 +358,29 @@ def video_completion(args):
         for i in range(nFrame):
             mask_tofill[:, :, i] = scipy.ndimage.binary_dilation(mask_tofill[:, :, i], iterations=2)
             img = video_comp[:, :, :, i] * 255
+            # Green indicates the regions that are not filled yet.
             img[mask_tofill[:, :, i]] = [0, 255, 0]
             cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + str(iter), '%05d.png'%i), img)
 
-        video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
-        imageio.mimwrite(os.path.join(args.outroot, 'frame_comp_' + str(iter), 'video_extrapolation.mp4'), video_comp_, fps=12, quality=8, macro_block_size=1)
-        imageio.mimsave(os.path.join(args.outroot, 'frame_comp_' + str(iter), 'video_extrapolation.gif'), video_comp_, format='gif', fps=12)
+        # video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
+        # imageio.mimwrite(os.path.join(args.outroot, 'frame_comp_' + str(iter), 'intermediate_{0}.mp4'.format(str(iter))), video_comp_, fps=12, quality=8, macro_block_size=1)
+        # imageio.mimsave(os.path.join(args.outroot, 'frame_comp_' + str(iter), 'intermediate_{0}.gif'.format(str(iter))), video_comp_, format='gif', fps=12)
         mask_tofill, video_comp = spatial_inpaint(deepfill, mask_tofill, video_comp)
         iter += 1
+
+    create_dir(os.path.join(args.outroot, 'frame_comp_' + 'final'))
+    video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
+    for i in range(nFrame):
+        img = video_comp[:, :, :, i] * 255
+        cv2.imwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', '%05d.png'%i), img)
+        imageio.mimwrite(os.path.join(args.outroot, 'frame_comp_' + 'final', 'final.mp4'), video_comp_, fps=12, quality=8, macro_block_size=1)
+        imageio.mimsave(os.path.join(args.outroot, 'frame_comp_' + 'final', 'final.gif'), video_comp_, format='gif', fps=12)
 
 
 def video_completion_seamless(args):
 
-    print('Pytorch 1.6.0 for flow prediction')
-    try:
-        RAFT_model = initialize_RAFT(args)
-    except:
-        RAFT_model = None
+    # Flow model.
+    RAFT_model = initialize_RAFT(args)
 
     # Loads frames.
     filename_list = glob.glob(os.path.join(args.path, '*.png')) + \
@@ -407,7 +401,7 @@ def video_completion_seamless(args):
     # Calcutes the corrupted flow.
     corrFlowF = calculate_flow(args, RAFT_model, video, 'forward')
     corrFlowB = calculate_flow(args, RAFT_model, video, 'backward')
-    print('\nFinish Calculating flow.')
+    print('\nFinish flow prediction.')
 
     # Makes sure video is in BGR (opencv) format.
     video = video.permute(2, 3, 1, 0).cpu().numpy()[:, :, ::-1, :] / 255.
@@ -452,27 +446,24 @@ def video_completion_seamless(args):
         flow_mask = np.stack(flow_mask, -1).astype(np.bool)
 
     if args.edge_guide:
-
-        print('Pytorch 1.6.0 for edge completion')
-        try:
-            from edgeconnect.networks import EdgeGenerator_
-            EdgeGenerator = EdgeGenerator_()
-            EdgeComp_ckpt = torch.load(args.edge_completion_model)
-            EdgeGenerator.load_state_dict(EdgeComp_ckpt['generator'])
-            EdgeGenerator.to(torch.device('cuda:0'))
-            EdgeGenerator.eval()
-        except:
-            EdgeGenerator = None
+        # Edge completion model.
+        EdgeGenerator = EdgeGenerator_()
+        EdgeComp_ckpt = torch.load(args.edge_completion_model)
+        EdgeGenerator.load_state_dict(EdgeComp_ckpt['generator'])
+        EdgeGenerator.to(torch.device('cuda:0'))
+        EdgeGenerator.eval()
 
         # Edge completion.
         FlowF_edge = edge_completion(args, EdgeGenerator, corrFlowF, flow_mask, 'forward')
         FlowB_edge = edge_completion(args, EdgeGenerator, corrFlowB, flow_mask, 'backward')
+        print('\nFinish edge completion.')
     else:
         FlowF_edge, FlowB_edge = None, None
 
     # Completes the flow.
     videoFlowF = complete_flow(args, corrFlowF, flow_mask, 'forward', FlowF_edge)
     videoFlowB = complete_flow(args, corrFlowB, flow_mask, 'backward', FlowB_edge)
+    print('\nFinish flow completion.')
 
     # Prepare gradients
     gradient_x = np.empty(((imgH, imgW, 3, 0)), dtype=np.float32)
@@ -498,15 +489,12 @@ def video_completion_seamless(args):
     gradient_y_filled = gradient_y # corrupted gradient_y, mask_gradient indicates the missing gradient region
     mask_gradient = mask_dilated
     video_comp = video
-    try:
-        from spatial_inpaint import spatial_inpaint
-        from frame_inpaint import DeepFillv1
-        deepfill = DeepFillv1(pretrained_model='/home/chengao/Weight/imagenet_deepfill.pth', image_shape=[imgH, imgW])
-    except:
-        print('Please switch to Pytorch 0.4.0')
-        return
 
-    while((np.sum(mask) > 0) and iter <= 5):
+    # Image inpainting model.
+    deepfill = DeepFillv1(pretrained_model=args.deepfill_model, image_shape=[imgH, imgW])
+
+    # We iteratively complete the video.
+    while(np.sum(mask) > 0):
         create_dir(os.path.join(args.outroot, 'frame_seamless_comp_' + str(iter)))
 
         # Gradient propagation.
@@ -532,28 +520,29 @@ def video_completion_seamless(args):
 
             if mask[:, :, indFrame].sum() > 0:
                 try:
-                    flowBlend, UnfilledMask = Poisson_blend_img(video_comp[:, :, :, indFrame], gradient_x_filled[:, 0 : imgW - 1, :, indFrame], gradient_y_filled[0 : imgH - 1, :, :, indFrame], mask[:, :, indFrame], mask_gradient[:, :, indFrame])
+                    frameBlend, UnfilledMask = Poisson_blend_img(video_comp[:, :, :, indFrame], gradient_x_filled[:, 0 : imgW - 1, :, indFrame], gradient_y_filled[0 : imgH - 1, :, :, indFrame], mask[:, :, indFrame], mask_gradient[:, :, indFrame])
                     # UnfilledMask = scipy.ndimage.binary_fill_holes(UnfilledMask).astype(np.bool)
                 except:
-                    flowBlend, UnfilledMask = video_comp[:, :, :, indFrame], mask[:, :, indFrame]
+                    frameBlend, UnfilledMask = video_comp[:, :, :, indFrame], mask[:, :, indFrame]
 
-                flowBlend = np.clip(flowBlend, 0, 1.0)
-                tmp = cv2.inpaint((flowBlend * 255).astype(np.uint8), UnfilledMask.astype(np.uint8), 3, cv2.INPAINT_TELEA).astype(np.float32) / 255.
-                flowBlend[UnfilledMask, :] = tmp[UnfilledMask, :]
+                frameBlend = np.clip(frameBlend, 0, 1.0)
+                tmp = cv2.inpaint((frameBlend * 255).astype(np.uint8), UnfilledMask.astype(np.uint8), 3, cv2.INPAINT_TELEA).astype(np.float32) / 255.
+                frameBlend[UnfilledMask, :] = tmp[UnfilledMask, :]
 
-                video_comp[:, :, :, indFrame] = flowBlend
+                video_comp[:, :, :, indFrame] = frameBlend
                 mask[:, :, indFrame] = UnfilledMask
 
-                flowBlend_ = copy.deepcopy(flowBlend)
-                flowBlend_[mask[:, :, indFrame], :] = [0, 1., 0]
+                frameBlend_ = copy.deepcopy(frameBlend)
+                # Green indicates the regions that are not filled yet.
+                frameBlend_[mask[:, :, indFrame], :] = [0, 1., 0]
             else:
-                flowBlend_ = video_comp[:, :, :, indFrame]
+                frameBlend_ = video_comp[:, :, :, indFrame]
 
-            cv2.imwrite(os.path.join(args.outroot, 'frame_seamless_comp_' + str(iter), '%05d.png'%indFrame), flowBlend_ * 255.)
+            cv2.imwrite(os.path.join(args.outroot, 'frame_seamless_comp_' + str(iter), '%05d.png'%indFrame), frameBlend_ * 255.)
 
-        video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
-        imageio.mimwrite(os.path.join(args.outroot, 'frame_seamless_comp_' + str(iter), 'video_extrapolation.mp4'), video_comp_, fps=12, quality=8, macro_block_size=1)
-        imageio.mimsave(os.path.join(args.outroot, 'frame_seamless_comp_' + str(iter), 'video_extrapolation.gif'), video_comp_, format='gif', fps=12)
+        # video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
+        # imageio.mimwrite(os.path.join(args.outroot, 'frame_seamless_comp_' + str(iter), 'intermediate_{0}.mp4'.format(str(iter))), video_comp_, fps=12, quality=8, macro_block_size=1)
+        # imageio.mimsave(os.path.join(args.outroot, 'frame_seamless_comp_' + str(iter), 'intermediate_{0}.gif'.format(str(iter))), video_comp_, format='gif', fps=12)
 
         mask, video_comp = spatial_inpaint(deepfill, mask, video_comp)
         iter += 1
@@ -567,6 +556,15 @@ def video_completion_seamless(args):
 
             gradient_x_filled[mask_gradient[:, :, indFrame], :, indFrame] = 0
             gradient_y_filled[mask_gradient[:, :, indFrame], :, indFrame] = 0
+
+    create_dir(os.path.join(args.outroot, 'frame_seamless_comp_' + 'final'))
+    video_comp_ = (video_comp * 255).astype(np.uint8).transpose(3, 0, 1, 2)[:, :, :, ::-1]
+    for i in range(nFrame):
+        img = video_comp[:, :, :, i] * 255
+        cv2.imwrite(os.path.join(args.outroot, 'frame_seamless_comp_' + 'final', '%05d.png'%i), img)
+        imageio.mimwrite(os.path.join(args.outroot, 'frame_seamless_comp_' + 'final', 'final.mp4'), video_comp_, fps=12, quality=8, macro_block_size=1)
+        imageio.mimsave(os.path.join(args.outroot, 'frame_seamless_comp_' + 'final', 'final.gif'), video_comp_, format='gif', fps=12)
+
 
 def main(args):
 
@@ -586,9 +584,9 @@ if __name__ == '__main__':
     # video completion
     parser.add_argument('--seamless', action='store_true', help='Whether operate in the gradient domain')
     parser.add_argument('--edge_guide', action='store_true', help='Whether use edge as guidance to complete flow')
-    parser.add_argument('--mode', default='object_removal', help="modes : object_removal / video_extrapolation")
-    parser.add_argument('--path', default='../data/surf', help="dataset for evaluation")
-    parser.add_argument('--path_mask', default='../data/surf_mask', help="mask for object removal")
+    parser.add_argument('--mode', default='object_removal', help="modes: object_removal / video_extrapolation")
+    parser.add_argument('--path', default='../data/tennis', help="dataset for evaluation")
+    parser.add_argument('--path_mask', default='../data/tennis_mask', help="mask for object removal")
     parser.add_argument('--outroot', default='../result/', help="output directory")
     parser.add_argument('--consistencyThres', dest='consistencyThres', default=np.inf, type=float, help='flow consistency error threshold')
     parser.add_argument('--alpha', dest='alpha', default=0.1, type=float)
