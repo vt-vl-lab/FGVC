@@ -1,6 +1,6 @@
 # [ECCV 2020] Flow-edge Guided Video Completion
 
-### [[Paper](https://arxiv.org/abs/2009.01835)] [[Project Website](http://chengao.vision/FGVC/)] [[Google Colab](#) (coming soon)]
+### [[Paper](https://arxiv.org/abs/2009.01835)] [[Project Website](http://chengao.vision/FGVC/)] [[Google Colab](https://colab.research.google.com/drive/1fW5Xnsi5QeKH6Zj-e2UT48Jm3SL8cbH2)]
 
 <p align='center'>
 <img src='http://chengao.vision/FGVC/files/FGVC_teaser.png' width='900'/>
