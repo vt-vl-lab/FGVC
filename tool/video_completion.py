@@ -24,9 +24,13 @@ from utils.Poisson_blend_img import Poisson_blend_img
 from get_flowNN import get_flowNN
 from get_flowNN_gradient import get_flowNN_gradient
 from utils.common_utils import flow_edge
+from utils.common_utils import divisible_by
 from spatial_inpaint import spatial_inpaint
 from frame_inpaint import DeepFillv1
 from edgeconnect.networks import EdgeGenerator_
+
+def valid_dimension(shape):
+    return divisible_by(shape, 8)
 
 def to_tensor(img):
     img = Image.fromarray(img)
@@ -138,10 +142,12 @@ def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori):
     imgH, imgW, _, nFrame = video_ori.shape
 
     # Defines new FOV.
-    imgH_extr = int(args.H_scale * imgH)
-    imgW_extr = int(args.W_scale * imgW)
+    imgH_extr = int(8 * round((args.H_scale * imgH) / 8))
+    imgW_extr = int(8 * round((args.W_scale * imgW) / 8))
     H_start = int((imgH_extr - imgH) / 2)
     W_start = int((imgW_extr - imgW) / 2)
+
+    print('New video dimension is {}x{}'.format(imgW_extr, imgH_extr))
 
     # Generates the mask for missing region.
     flow_mask = np.ones(((imgH_extr, imgW_extr)), dtype=np.bool)
@@ -267,6 +273,9 @@ def video_completion(args):
     imgH, imgW = np.array(Image.open(filename_list[0])).shape[:2]
     nFrame = len(filename_list)
 
+    if not valid_dimension((imgH, imgW,)):
+        raise Exception('Height and width must be divisible by 8')
+
     # Loads video.
     video = []
     for filename in sorted(filename_list):
@@ -389,6 +398,9 @@ def video_completion_seamless(args):
     # Obtains imgH, imgW and nFrame.
     imgH, imgW = np.array(Image.open(filename_list[0])).shape[:2]
     nFrame = len(filename_list)
+
+    if not valid_dimension((imgH, imgW,)):
+        raise Exception('Height and width must be divisible by 8')
 
     # Loads video.
     video = []

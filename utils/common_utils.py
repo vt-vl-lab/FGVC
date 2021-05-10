@@ -170,6 +170,11 @@ def interp(img, x, y):
 
     return mapped_img
 
+def divisible_by(shape, dv):
+    for value in shape:
+        if (value % dv) != 0:
+            return False
+    return True
 
 def imsave(img, path):
     im = Image.fromarray(img.cpu().numpy().astype(np.uint8).squeeze())
