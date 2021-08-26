@@ -270,7 +270,7 @@ def video_completion(args):
     # Loads video.
     video = []
     for filename in sorted(filename_list):
-        video.append(torch.from_numpy(np.array(Image.open(filename)).astype(np.uint8)).permute(2, 0, 1).float())
+        video.append(torch.from_numpy(np.array(Image.open(filename)).astype(np.uint8)[..., :3]).permute(2, 0, 1).float())
 
     video = torch.stack(video, dim=0)
     video = video.to('cuda')
@@ -393,7 +393,7 @@ def video_completion_seamless(args):
     # Loads video.
     video = []
     for filename in sorted(filename_list):
-        video.append(torch.from_numpy(np.array(Image.open(filename)).astype(np.uint8)).permute(2, 0, 1).float())
+        video.append(torch.from_numpy(np.array(Image.open(filename)).astype(np.uint8)[..., :3]).permute(2, 0, 1).float())
 
     video = torch.stack(video, dim=0)
     video = video.to('cuda')
