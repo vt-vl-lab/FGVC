@@ -153,8 +153,8 @@ def infer(args, EdgeGenerator, device, flow_img_gray, edge, mask):
 def gradient_mask(mask):
 
     gradient_mask = np.logical_or.reduce((mask,
-        np.concatenate((mask[1:, :], np.zeros((1, mask.shape[1]), dtype=np.bool)), axis=0),
-        np.concatenate((mask[:, 1:], np.zeros((mask.shape[0], 1), dtype=np.bool)), axis=1)))
+        np.concatenate((mask[1:, :], np.zeros((1, mask.shape[1]), dtype=bool)), axis=0),
+        np.concatenate((mask[:, 1:], np.zeros((mask.shape[0], 1), dtype=bool)), axis=1)))
 
     return gradient_mask
 
@@ -215,20 +215,23 @@ def calculate_flow(args, model, video):
     nFrame, _, imgH, imgW = video.shape
     FlowF = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
     FlowB = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-    FlowNLF0 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-    FlowNLF1 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-    FlowNLF2 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-    FlowNLB0 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-    FlowNLB1 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-    FlowNLB2 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowNLF = np.empty(((imgH, imgW, 2, 3, 0)), dtype=np.float32)
+    FlowNLB = np.empty(((imgH, imgW, 2, 3, 0)), dtype=np.float32)
 
-    for mode in ['forward', 'backward', 'nonlocal_forward', 'nonlocal_backward']:
+    if args.Nonlocal:
+        mode_list = ['forward', 'backward', 'nonlocal_forward', 'nonlocal_backward']
+    else:
+        mode_list = ['forward', 'backward']
+
+    for mode in mode_list:
         create_dir(os.path.join(args.outroot, 'flow', mode + '_flo'))
         create_dir(os.path.join(args.outroot, 'flow', mode + '_png'))
 
         with torch.no_grad():
-            for i in range(nFrame - 1):
+            for i in range(nFrame):
                 if mode == 'forward':
+                    if i == nFrame - 1:
+                        continue
                     # Flow i -> i + 1
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
                     image1 = video[i, None]
@@ -236,6 +239,8 @@ def calculate_flow(args, model, video):
                     flow = infer_flow(args, mode, '%05d'%i, image1, image2, imgH, imgW, model, homography=False)
                     FlowF = np.concatenate((FlowF, flow[..., None]), axis=-1)
                 elif mode == 'backward':
+                    if i == nFrame - 1:
+                        continue
                     # Flow i + 1 -> i
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
                     image1 = video[i + 1, None]
@@ -247,85 +252,47 @@ def calculate_flow(args, model, video):
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, 0), '\r', end='')
                     image1 = video[i, None]
                     image2 = video[0, None]
-                    flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
-                    FlowNLF0 = np.concatenate((FlowNLF0, flow[..., None]), axis=-1)
+                    FlowNLF0 = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
+
                     # Flow i -> nFrame // 2
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame // 2), '\r', end='')
                     image1 = video[i, None]
                     image2 = video[nFrame // 2, None]
-                    flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
-                    FlowNLF1 = np.concatenate((FlowNLF1, flow[..., None]), axis=-1)
+                    FlowNLF1 = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
+
                     # # Flow i -> nFrame - 1
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame - 1), '\r', end='')
                     image1 = video[i, None]
                     image2 = video[nFrame - 1, None]
-                    flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
-                    FlowNLF2 = np.concatenate((FlowNLF2, flow[..., None]), axis=-1)
+                    FlowNLF2 = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
+
+                    FlowNLF = np.concatenate((FlowNLF, np.stack((FlowNLF0, FlowNLF1, FlowNLF2), -1)[..., None]), axis=-1)
+
                 elif mode == 'nonlocal_backward':
                     # Flow 0 -> i
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, 0, i), '\r', end='')
                     image1 = video[0, None]
                     image2 = video[i, None]
-                    flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
-                    FlowNLB0 = np.concatenate((FlowNLB0, flow[..., None]), axis=-1)
+                    FlowNLB0 = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
+
                     # Flow nFrame // 2 -> i
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame // 2, i), '\r', end='')
                     image1 = video[nFrame // 2, None]
                     image2 = video[i, None]
-                    flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
-                    FlowNLB1 = np.concatenate((FlowNLB1, flow[..., None]), axis=-1)
+                    FlowNLB1 = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
+
                     # # Flow nFrame - 1 -> i
                     print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame - 1, i), '\r', end='')
                     image1 = video[nFrame - 1, None]
                     image2 = video[i, None]
-                    flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
-                    FlowNLB2 = np.concatenate((FlowNLB2, flow[..., None]), axis=-1)
+                    FlowNLB2 = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
 
-    with torch.no_grad():
-        i = nFrame - 1
+                    FlowNLB = np.concatenate((FlowNLB, np.stack((FlowNLB0, FlowNLB1, FlowNLB1), -1)[..., None]), axis=-1)
 
-        # Flow i -> 0
-        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, 0), '\r', end='')
-        image1 = video[i, None]
-        image2 = video[0, None]
-        flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
-        FlowNLF0 = np.concatenate((FlowNLF0, flow[..., None]), axis=-1)
-        # Flow i -> nFrame // 2
-        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame // 2), '\r', end='')
-        image1 = video[i, None]
-        image2 = video[nFrame // 2, None]
-        flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
-        FlowNLF1 = np.concatenate((FlowNLF1, flow[..., None]), axis=-1)
-        # # Flow i -> nFrame - 1
-        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame - 1), '\r', end='')
-        image1 = video[i, None]
-        image2 = video[nFrame - 1, None]
-        flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
-        FlowNLF2 = np.concatenate((FlowNLF2, flow[..., None]), axis=-1)
-
-        # Flow 0 -> i
-        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, 0, i), '\r', end='')
-        image1 = video[0, None]
-        image2 = video[i, None]
-        flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
-        FlowNLB0 = np.concatenate((FlowNLB0, flow[..., None]), axis=-1)
-        # Flow nFrame // 2 -> i
-        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame // 2, i), '\r', end='')
-        image1 = video[nFrame // 2, None]
-        image2 = video[i, None]
-        flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
-        FlowNLB1 = np.concatenate((FlowNLB1, flow[..., None]), axis=-1)
-        # # Flow nFrame - 1 -> i
-        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame - 1, i), '\r', end='')
-        image1 = video[nFrame - 1, None]
-        image2 = video[i, None]
-        flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
-        FlowNLB2 = np.concatenate((FlowNLB2, flow[..., None]), axis=-1)
-
-    return FlowF, FlowB, np.stack((FlowNLF0, FlowNLF1, FlowNLF2), 3), np.stack((FlowNLB0, FlowNLB1, FlowNLB2), 3)
+    return FlowF, FlowB, FlowNLF, FlowNLB
 
 
-def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori):
+def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori, corrFlowNLF_ori, corrFlowNLB_ori):
     """Prepares the data for video extrapolation.
     """
     imgH, imgW, _, nFrame = video_ori.shape
@@ -337,7 +304,7 @@ def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori):
     W_start = int((imgW_extr - imgW) / 2)
 
     # Generates the mask for missing region.
-    flow_mask = np.ones(((imgH_extr, imgW_extr)), dtype=np.bool)
+    flow_mask = np.ones(((imgH_extr, imgW_extr)), dtype=bool)
     flow_mask[H_start : H_start + imgH, W_start : W_start + imgW] = 0
 
     mask_dilated = gradient_mask(flow_mask)
@@ -353,39 +320,50 @@ def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori):
     # Extrapolates the FOV for flow.
     corrFlowF = np.zeros(((imgH_extr, imgW_extr, 2, nFrame - 1)), dtype=np.float32)
     corrFlowB = np.zeros(((imgH_extr, imgW_extr, 2, nFrame - 1)), dtype=np.float32)
-    corrFlowF[H_start : H_start + imgH, W_start : W_start + imgW, :] = corrFlowF_ori
-    corrFlowB[H_start : H_start + imgH, W_start : W_start + imgW, :] = corrFlowB_ori
 
+    corrFlowF[H_start : H_start + imgH, W_start : W_start + imgW] = corrFlowF_ori
+    corrFlowB[H_start : H_start + imgH, W_start : W_start + imgW] = corrFlowB_ori
 
-    return video, corrFlowF, corrFlowB, flow_mask, mask_dilated, (W_start, H_start), (W_start + imgW, H_start + imgH)
+    if args.Nonlocal:
+        corrFlowNLF = np.zeros(((imgH_extr, imgW_extr, 2, 3, nFrame)), dtype=np.float32)
+        corrFlowNLB = np.zeros(((imgH_extr, imgW_extr, 2, 3, nFrame)), dtype=np.float32)
+
+        corrFlowNLF[H_start : H_start + imgH, W_start : W_start + imgW] = corrFlowNLF_ori
+        corrFlowNLB[H_start : H_start + imgH, W_start : W_start + imgW] = corrFlowNLB_ori
+    else:
+        corrFlowNLF = None
+        corrFlowNLB = None
+
+    return video, corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB, flow_mask, mask_dilated, (W_start, H_start), (W_start + imgW, H_start + imgH)
 
 
 def complete_flow(args, corrFlow, flow_mask, mode, edge=None):
     """Completes flow.
     """
-    if mode not in ['forward', 'backward']:
+    if mode not in ['forward', 'backward', 'nonlocal_forward', 'nonlocal_backward']:
         raise NotImplementedError
 
-    imgH, imgW, _, nFrame = corrFlow.shape
-
-    # if os.path.isdir(os.path.join(args.outroot, 'flow_comp', mode + '_flo')):
-    #     compFlow = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
-    #     for flow_name in sorted(glob.glob(os.path.join(args.outroot, 'flow_comp', mode + '_flo', '*.flo'))):
-    #         print("Loading {0}".format(flow_name), '\r', end='')
-    #         flow = utils.frame_utils.readFlow(flow_name)
-    #         compFlow = np.concatenate((compFlow, flow[..., None]), axis=-1)
-    #     return compFlow
+    sh = corrFlow.shape
+    imgH = sh[0]
+    imgW = sh[1]
+    nFrame = sh[-1]
 
     create_dir(os.path.join(args.outroot, 'flow_comp', mode + '_flo'))
     create_dir(os.path.join(args.outroot, 'flow_comp', mode + '_png'))
 
-    compFlow = np.zeros(((imgH, imgW, 2, nFrame)), dtype=np.float32)
+    compFlow = np.zeros(((sh)), dtype=np.float32)
 
     for i in range(nFrame):
         print("Completing {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
-        flow = corrFlow[:, :, :, i]
-        flow_mask_img = flow_mask[:, :, i] if mode == 'forward' else flow_mask[:, :, i + 1]
-        flow_mask_gradient_img = gradient_mask(flow_mask_img)
+        flow = corrFlow[..., i]
+        if mode == 'forward':
+            flow_mask_img = flow_mask[:, :, i]
+            flow_mask_gradient_img = gradient_mask(flow_mask_img)
+        elif mode == 'backward':
+            flow_mask_img = flow_mask[:, :, i + 1]
+            flow_mask_gradient_img = gradient_mask(flow_mask_img)
+        else: # nonlocal_backward
+            assert edge == None
 
         if edge is not None:
             # imgH x (imgW - 1 + 1) x 2
@@ -408,17 +386,31 @@ def complete_flow(args, corrFlow, flow_mask, mode, edge=None):
             compFlow[:, :, :, i] = Poisson_blend(flow, imgSrc_gx, imgSrc_gy, flow_mask_img, edge[:, :, i])
 
         else:
-            flow[:, :, 0] = rf.regionfill(flow[:, :, 0], flow_mask_img)
-            flow[:, :, 1] = rf.regionfill(flow[:, :, 1], flow_mask_img)
-            compFlow[:, :, :, i] = flow
-
-        # Flow visualization.
-        flow_img = utils.flow_viz.flow_to_image(compFlow[:, :, :, i])
-        flow_img = Image.fromarray(flow_img)
-
-        # Saves the flow and flow_img.
-        flow_img.save(os.path.join(args.outroot, 'flow_comp', mode + '_png', '%05d.png'%i))
-        utils.frame_utils.writeFlow(os.path.join(args.outroot, 'flow_comp', mode + '_flo', '%05d.flo'%i), compFlow[:, :, :, i])
+            if mode == 'forward' or mode == 'backward':
+                flow[:, :, 0] = rf.regionfill(flow[:, :, 0], flow_mask_img)
+                flow[:, :, 1] = rf.regionfill(flow[:, :, 1], flow_mask_img)
+                compFlow[:, :, :, i] = flow
+            elif mode == 'nonlocal_forward':
+                flow[:, :, 0, 0] = rf.regionfill(flow[:, :, 0, 0], flow_mask[:, :, i])
+                flow[:, :, 1, 0] = rf.regionfill(flow[:, :, 1, 0], flow_mask[:, :, i])
+                flow[:, :, 0, 1] = rf.regionfill(flow[:, :, 0, 1], flow_mask[:, :, i])
+                flow[:, :, 1, 1] = rf.regionfill(flow[:, :, 1, 1], flow_mask[:, :, i])
+                flow[:, :, 0, 2] = rf.regionfill(flow[:, :, 0, 2], flow_mask[:, :, i])
+                flow[:, :, 1, 2] = rf.regionfill(flow[:, :, 1, 2], flow_mask[:, :, i])
+            else:
+                flow[:, :, 0, 0] = rf.regionfill(flow[:, :, 0, 0], flow_mask[:, :, 0])
+                flow[:, :, 1, 0] = rf.regionfill(flow[:, :, 1, 0], flow_mask[:, :, 0])
+                flow[:, :, 0, 1] = rf.regionfill(flow[:, :, 0, 1], flow_mask[:, :, nFrame // 2])
+                flow[:, :, 1, 1] = rf.regionfill(flow[:, :, 1, 1], flow_mask[:, :, nFrame // 2])
+                flow[:, :, 0, 2] = rf.regionfill(flow[:, :, 0, 2], flow_mask[:, :, nFrame - 1])
+                flow[:, :, 1, 2] = rf.regionfill(flow[:, :, 1, 2], flow_mask[:, :, nFrame - 1])
+        # # Flow visualization.
+        # flow_img = utils.flow_viz.flow_to_image(compFlow[:, :, :, i])
+        # flow_img = Image.fromarray(flow_img)
+        #
+        # # Saves the flow and flow_img.
+        # flow_img.save(os.path.join(args.outroot, 'flow_comp', mode + '_png', '%05d.png'%i))
+        # utils.frame_utils.writeFlow(os.path.join(args.outroot, 'flow_comp', mode + '_flo', '%05d.flo'%i), compFlow[:, :, :, i])
 
     return compFlow
 
@@ -440,7 +432,7 @@ def edge_completion(args, EdgeGenerator, corrFlow, flow_mask, mode):
         flow_img_gray = (corrFlow[:, :, 0, i] ** 2 + corrFlow[:, :, 1, i] ** 2) ** 0.5
         flow_img_gray = flow_img_gray / flow_img_gray.max()
 
-        edge_corr = canny(flow_img_gray, sigma=2, mask=(1 - flow_mask_img).astype(np.bool))
+        edge_corr = canny(flow_img_gray, sigma=2, mask=(1 - flow_mask_img).astype(bool))
         edge_completed = infer(args, EdgeGenerator, torch.device('cuda:0'), flow_img_gray, edge_corr, flow_mask_img)
         Edge = np.concatenate((Edge, edge_completed[..., None]), axis=-1)
 
@@ -478,7 +470,7 @@ def video_completion(args):
     if args.mode == 'video_extrapolation':
 
         # Creates video and flow where the extrapolated region are missing.
-        video, corrFlowF, corrFlowB, flow_mask, mask_dilated, start_point, end_point = extrapolation(args, video, corrFlowF, corrFlowB)
+        video, corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB, flow_mask, mask_dilated, start_point, end_point = extrapolation(args, video, corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB)
         imgH, imgW = video.shape[:2]
 
         # mask indicating the missing region in the video.
@@ -499,13 +491,13 @@ def video_completion(args):
             # Dilate 15 pixel so that all known pixel is trustworthy
             flow_mask_img = scipy.ndimage.binary_dilation(mask_img, iterations=15)
             # Close the small holes inside the foreground objects
-            flow_mask_img = cv2.morphologyEx(flow_mask_img.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((21, 21),np.uint8)).astype(np.bool)
-            flow_mask_img = scipy.ndimage.binary_fill_holes(flow_mask_img).astype(np.bool)
+            flow_mask_img = cv2.morphologyEx(flow_mask_img.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((21, 21),np.uint8)).astype(bool)
+            flow_mask_img = scipy.ndimage.binary_fill_holes(flow_mask_img).astype(bool)
             flow_mask.append(flow_mask_img)
 
         # mask indicating the missing region in the video.
-        mask = np.stack(mask, -1).astype(np.bool)
-        flow_mask = np.stack(flow_mask, -1).astype(np.bool)
+        mask = np.stack(mask, -1).astype(bool)
+        flow_mask = np.stack(flow_mask, -1).astype(bool)
 
     if args.edge_guide:
         # Edge completion model.
@@ -525,6 +517,13 @@ def video_completion(args):
     # Completes the flow.
     videoFlowF = complete_flow(args, corrFlowF, flow_mask, 'forward', FlowF_edge)
     videoFlowB = complete_flow(args, corrFlowB, flow_mask, 'backward', FlowB_edge)
+
+    if args.Nonlocal:
+        videoNonLocalFlowF = complete_flow(args, corrFlowNLF, flow_mask, 'nonlocal_forward', None)
+        videoNonLocalFlowB = complete_flow(args, corrFlowNLB, flow_mask, 'nonlocal_backward', None)
+    else:
+        videoNonLocalFlowF = None
+        videoNonLocalFlowB = None
     print('\nFinish flow completion.')
 
     iter = 0
@@ -544,8 +543,8 @@ def video_completion(args):
                                       mask_tofill,
                                       videoFlowF,
                                       videoFlowB,
-                                      None,
-                                      None)
+                                      videoNonLocalFlowF,
+                                      videoNonLocalFlowB)
 
         for i in range(nFrame):
             mask_tofill[:, :, i] = scipy.ndimage.binary_dilation(mask_tofill[:, :, i], iterations=2)
@@ -600,7 +599,7 @@ def video_completion_seamless(args):
     if args.mode == 'video_extrapolation':
 
         # Creates video and flow where the extrapolated region are missing.
-        video, corrFlowF, corrFlowB, flow_mask, mask_dilated, start_point, end_point = extrapolation(args, video, corrFlowF, corrFlowB)
+        video, corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB, flow_mask, mask_dilated, start_point, end_point = extrapolation(args, video, corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB)
         imgH, imgW = video.shape[:2]
 
         # mask indicating the missing region in the video.
@@ -622,19 +621,19 @@ def video_completion_seamless(args):
             # Dilate 15 pixel so that all known pixel is trustworthy
             flow_mask_img = scipy.ndimage.binary_dilation(mask_img, iterations=15)
             # Close the small holes inside the foreground objects
-            flow_mask_img = cv2.morphologyEx(flow_mask_img.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((21, 21),np.uint8)).astype(np.bool)
-            flow_mask_img = scipy.ndimage.binary_fill_holes(flow_mask_img).astype(np.bool)
+            flow_mask_img = cv2.morphologyEx(flow_mask_img.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((21, 21),np.uint8)).astype(bool)
+            flow_mask_img = scipy.ndimage.binary_fill_holes(flow_mask_img).astype(bool)
             flow_mask.append(flow_mask_img)
 
             mask_img = scipy.ndimage.binary_dilation(mask_img, iterations=5)
-            mask_img = scipy.ndimage.binary_fill_holes(mask_img).astype(np.bool)
+            mask_img = scipy.ndimage.binary_fill_holes(mask_img).astype(bool)
             mask.append(mask_img)
             mask_dilated.append(gradient_mask(mask_img))
 
         # mask indicating the missing region in the video.
-        mask = np.stack(mask, -1).astype(np.bool)
-        mask_dilated = np.stack(mask_dilated, -1).astype(np.bool)
-        flow_mask = np.stack(flow_mask, -1).astype(np.bool)
+        mask = np.stack(mask, -1).astype(bool)
+        mask_dilated = np.stack(mask_dilated, -1).astype(bool)
+        flow_mask = np.stack(flow_mask, -1).astype(bool)
 
     if args.edge_guide:
         # Edge completion model.
@@ -654,6 +653,12 @@ def video_completion_seamless(args):
     # Completes the flow.
     videoFlowF = complete_flow(args, corrFlowF, flow_mask, 'forward', FlowF_edge)
     videoFlowB = complete_flow(args, corrFlowB, flow_mask, 'backward', FlowB_edge)
+    if args.Nonlocal:
+        videoNonLocalFlowF = complete_flow(args, corrFlowNLF, flow_mask, 'nonlocal_forward', None)
+        videoNonLocalFlowB = complete_flow(args, corrFlowNLB, flow_mask, 'nonlocal_backward', None)
+    else:
+        videoNonLocalFlowF = None
+        videoNonLocalFlowB = None
     print('\nFinish flow completion.')
 
     # Prepare gradients
@@ -697,12 +702,12 @@ def video_completion_seamless(args):
                                 mask_gradient,
                                 videoFlowF,
                                 videoFlowB,
-                                None,
-                                None)
+                                videoNonLocalFlowF,
+                                videoNonLocalFlowB)
 
         # if there exist holes in mask, Poisson blending will fail. So I did this trick. I sacrifice some value. Another solution is to modify Poisson blending.
         for indFrame in range(nFrame):
-            mask_gradient[:, :, indFrame] = scipy.ndimage.binary_fill_holes(mask_gradient[:, :, indFrame]).astype(np.bool)
+            mask_gradient[:, :, indFrame] = scipy.ndimage.binary_fill_holes(mask_gradient[:, :, indFrame]).astype(bool)
 
         # After one gradient propagation iteration
         # gradient --> RGB
@@ -712,7 +717,7 @@ def video_completion_seamless(args):
             if mask[:, :, indFrame].sum() > 0:
                 try:
                     frameBlend, UnfilledMask = Poisson_blend_img(video_comp[:, :, :, indFrame], gradient_x_filled[:, 0 : imgW - 1, :, indFrame], gradient_y_filled[0 : imgH - 1, :, :, indFrame], mask[:, :, indFrame], mask_gradient[:, :, indFrame])
-                    # UnfilledMask = scipy.ndimage.binary_fill_holes(UnfilledMask).astype(np.bool)
+                    # UnfilledMask = scipy.ndimage.binary_fill_holes(UnfilledMask).astype(bool)
                 except:
                     frameBlend, UnfilledMask = video_comp[:, :, :, indFrame], mask[:, :, indFrame]
 
@@ -781,7 +786,7 @@ if __name__ == '__main__':
     parser.add_argument('--outroot', default='../result/', help="output directory")
     parser.add_argument('--consistencyThres', dest='consistencyThres', default=np.inf, type=float, help='flow consistency error threshold')
     parser.add_argument('--alpha', dest='alpha', default=0.1, type=float)
-    parser.add_argument('--Nonlocal', dest='Nonlocal', default=False, type=bool)
+    parser.add_argument('--Nonlocal', action='store_true', help='Whether use edge as guidance to complete flow')
 
     # RAFT
     parser.add_argument('--model', default='../weight/raft-things.pth', help="restore checkpoint")
