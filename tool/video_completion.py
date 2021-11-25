@@ -9,6 +9,7 @@ import glob
 import copy
 import numpy as np
 import torch
+import imutils
 import imageio
 from PIL import Image
 import scipy.ndimage
@@ -27,6 +28,100 @@ from utils.common_utils import flow_edge
 from spatial_inpaint import spatial_inpaint
 from frame_inpaint import DeepFillv1
 from edgeconnect.networks import EdgeGenerator_
+
+
+def detectAndDescribe(image):
+    # convert the image to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # check to see if we are using OpenCV 3.X
+    if imutils.is_cv3(or_better=True):
+
+        # detect and extract features from the image
+        descriptor = cv2.xfeatures2d.SURF_create()
+        (kps, features) = descriptor.detectAndCompute(image.astype(np.uint8), None)
+
+        # orb feature is way faster
+        # orb = cv2.ORB_create()
+        # kp = orb.detect(gray, None)
+        # (kps, features) = orb.compute(gray, kp)
+
+    # otherwise, we are using OpenCV 2.4.X
+    else:
+        # detect keypoints in the image
+        detector = cv2.FeatureDetector_create("SIFT")
+        kps = detector.detect(gray)
+
+        # extract features from the image
+        extractor = cv2.DescriptorExtractor_create("SIFT")
+        (kps, features) = extractor.compute(gray, kps)
+
+    # convert the keypoints from KeyPoint objects to NumPy
+    # arrays
+    kps = np.float32([kp.pt for kp in kps])
+
+    # return a tuple of keypoints and features
+    return (kps, features)
+
+
+def matchKeypoints(kpsA, kpsB, featuresA, featuresB, ratio=0.75, reprojThresh=4.0):
+    # compute the raw matches and initialize the list of actual
+    # matches
+    matcher = cv2.DescriptorMatcher_create("BruteForce")
+    rawMatches = matcher.knnMatch(featuresA, featuresB, 2)
+    matches = []
+
+    # loop over the raw matches
+    for m in rawMatches:
+        # ensure the distance is within a certain ratio of each
+        # other (i.e. Lowe's ratio test)
+        if len(m) == 2 and m[0].distance < m[1].distance * ratio:
+            matches.append((m[0].trainIdx, m[0].queryIdx))
+
+    # computing a homography requires at least 4 matches
+    if len(matches) > 4:
+        # construct the two sets of points
+        ptsA = np.float32([kpsA[i] for (_, i) in matches])
+        ptsB = np.float32([kpsB[i] for (i, _) in matches])
+
+        # compute the homography between the two sets of points
+        (H, status) = cv2.findHomography(ptsA, ptsB, cv2.RANSAC, reprojThresh)
+
+        # return the matches along with the homograpy matrix
+        # and status of each matched point
+        return (matches, H, status)
+
+    # otherwise, no homograpy could be computed
+    return None
+
+
+def homograpy(image1, image2):
+    image1 = image1[0].permute(1, 2, 0).cpu().numpy()
+    image2 = image2[0].permute(1, 2, 0).cpu().numpy()
+
+    imgH, imgW, _ = image1.shape
+
+    (kpsA, featuresA) = detectAndDescribe(image1)
+    (kpsB, featuresB) = detectAndDescribe(image2)
+
+    try:
+        (_, H_BA, _) = matchKeypoints(kpsB, kpsA, featuresB, featuresA)
+    except:
+        H_BA = np.array([1.0,0,0,0,1.0,0,0,0,1.0]).reshape(3,3)
+
+    NoneType = type(None)
+    if type(H_BA) == NoneType:
+        H_BA = np.array([1.0,0,0,0,1.0,0,0,0,1.0]).reshape(3,3)
+
+    try:
+        tmp = np.linalg.inv(H_BA)
+    except:
+        H_BA = np.array([1.0,0,0,0,1.0,0,0,0,1.0]).reshape(3,3)
+
+    image2_registered = cv2.warpPerspective(image2, H_BA, (imgW, imgH))
+
+    return image2_registered, H_BA
+
 
 def to_tensor(img):
     img = Image.fromarray(img)
@@ -84,52 +179,150 @@ def initialize_RAFT(args):
     return model
 
 
-def calculate_flow(args, model, video, mode):
+def infer_flow(args, mode, filename, image1, image2, imgH, imgW, model, homography=False):
+
+    if not homography:
+        _, flow = model(image1, image2, iters=20, test_mode=True)
+        flow = flow[0].permute(1, 2, 0).cpu().numpy()
+    else:
+        image2_reg, H_BA = homograpy(image1, image2)
+        image2_reg = torch.tensor(image2_reg).permute(2, 0, 1)[None].float().to('cuda')
+        _, flow = model(image1, image2_reg, iters=20, test_mode=True)
+        flow = flow[0].permute(1, 2, 0).cpu().numpy()
+
+        (fy, fx) = np.mgrid[0 : imgH, 0 : imgW].astype(np.float32)
+
+        fxx = copy.deepcopy(fx) + flow[:, :, 0]
+        fyy = copy.deepcopy(fy) + flow[:, :, 1]
+
+        (fxxx, fyyy, fz) = np.linalg.inv(H_BA).dot(np.concatenate((fxx.reshape(1, -1),
+                                                   fyy.reshape(1, -1),
+                                                   np.ones_like(fyy).reshape(1, -1)), axis=0))
+        fxxx, fyyy = fxxx / fz, fyyy / fz
+
+        flow = np.concatenate((fxxx.reshape(imgH, imgW, 1) - fx.reshape(imgH, imgW, 1),
+                               fyyy.reshape(imgH, imgW, 1) - fy.reshape(imgH, imgW, 1)), axis=2)
+
+    Image.fromarray(utils.flow_viz.flow_to_image(flow)).save(os.path.join(args.outroot, 'flow', mode + '_png', filename + '.png'))
+    utils.frame_utils.writeFlow(os.path.join(args.outroot, 'flow', mode + '_flo', filename + '.flo'), flow)
+
+    return flow
+
+
+def calculate_flow(args, model, video):
     """Calculates optical flow.
     """
-    if mode not in ['forward', 'backward']:
-        raise NotImplementedError
-
     nFrame, _, imgH, imgW = video.shape
-    Flow = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowF = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowB = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowNLF0 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowNLF1 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowNLF2 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowNLB0 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowNLB1 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    FlowNLB2 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
 
-    # if os.path.isdir(os.path.join(args.outroot, 'flow', mode + '_flo')):
-    #     for flow_name in sorted(glob.glob(os.path.join(args.outroot, 'flow', mode + '_flo', '*.flo'))):
-    #         print("Loading {0}".format(flow_name), '\r', end='')
-    #         flow = utils.frame_utils.readFlow(flow_name)
-    #         Flow = np.concatenate((Flow, flow[..., None]), axis=-1)
-    #     return Flow
+    for mode in ['forward', 'backward', 'nonlocal_forward', 'nonlocal_backward']:
+        create_dir(os.path.join(args.outroot, 'flow', mode + '_flo'))
+        create_dir(os.path.join(args.outroot, 'flow', mode + '_png'))
 
-    create_dir(os.path.join(args.outroot, 'flow', mode + '_flo'))
-    create_dir(os.path.join(args.outroot, 'flow', mode + '_png'))
+        with torch.no_grad():
+            for i in range(nFrame - 1):
+                if mode == 'forward':
+                    # Flow i -> i + 1
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
+                    image1 = video[i, None]
+                    image2 = video[i + 1, None]
+                    flow = infer_flow(args, mode, '%05d'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowF = np.concatenate((FlowF, flow[..., None]), axis=-1)
+                elif mode == 'backward':
+                    # Flow i + 1 -> i
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
+                    image1 = video[i + 1, None]
+                    image2 = video[i, None]
+                    flow = infer_flow(args, mode, '%05d'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowB = np.concatenate((FlowB, flow[..., None]), axis=-1)
+                elif mode == 'nonlocal_forward':
+                    # Flow i -> 0
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, 0), '\r', end='')
+                    image1 = video[i, None]
+                    image2 = video[0, None]
+                    flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowNLF0 = np.concatenate((FlowNLF0, flow[..., None]), axis=-1)
+                    # Flow i -> nFrame // 2
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame // 2), '\r', end='')
+                    image1 = video[i, None]
+                    image2 = video[nFrame // 2, None]
+                    flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowNLF1 = np.concatenate((FlowNLF1, flow[..., None]), axis=-1)
+                    # # Flow i -> nFrame - 1
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame - 1), '\r', end='')
+                    image1 = video[i, None]
+                    image2 = video[nFrame - 1, None]
+                    flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowNLF2 = np.concatenate((FlowNLF2, flow[..., None]), axis=-1)
+                elif mode == 'nonlocal_backward':
+                    # Flow 0 -> i
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, 0, i), '\r', end='')
+                    image1 = video[0, None]
+                    image2 = video[i, None]
+                    flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowNLB0 = np.concatenate((FlowNLB0, flow[..., None]), axis=-1)
+                    # Flow nFrame // 2 -> i
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame // 2, i), '\r', end='')
+                    image1 = video[nFrame // 2, None]
+                    image2 = video[i, None]
+                    flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowNLB1 = np.concatenate((FlowNLB1, flow[..., None]), axis=-1)
+                    # # Flow nFrame - 1 -> i
+                    print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame - 1, i), '\r', end='')
+                    image1 = video[nFrame - 1, None]
+                    image2 = video[i, None]
+                    flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
+                    FlowNLB2 = np.concatenate((FlowNLB2, flow[..., None]), axis=-1)
 
     with torch.no_grad():
-        for i in range(video.shape[0] - 1):
-            print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, i + 1), '\r', end='')
-            if mode == 'forward':
-                # Flow i -> i + 1
-                image1 = video[i, None]
-                image2 = video[i + 1, None]
-            elif mode == 'backward':
-                # Flow i + 1 -> i
-                image1 = video[i + 1, None]
-                image2 = video[i, None]
-            else:
-                raise NotImplementedError
+        i = nFrame - 1
 
-            _, flow = model(image1, image2, iters=20, test_mode=True)
-            flow = flow[0].permute(1, 2, 0).cpu().numpy()
-            Flow = np.concatenate((Flow, flow[..., None]), axis=-1)
+        # Flow i -> 0
+        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, 0), '\r', end='')
+        image1 = video[i, None]
+        image2 = video[0, None]
+        flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
+        FlowNLF0 = np.concatenate((FlowNLF0, flow[..., None]), axis=-1)
+        # Flow i -> nFrame // 2
+        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame // 2), '\r', end='')
+        image1 = video[i, None]
+        image2 = video[nFrame // 2, None]
+        flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
+        FlowNLF1 = np.concatenate((FlowNLF1, flow[..., None]), axis=-1)
+        # # Flow i -> nFrame - 1
+        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, i, nFrame - 1), '\r', end='')
+        image1 = video[i, None]
+        image2 = video[nFrame - 1, None]
+        flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
+        FlowNLF2 = np.concatenate((FlowNLF2, flow[..., None]), axis=-1)
 
-            # Flow visualization.
-            flow_img = utils.flow_viz.flow_to_image(flow)
-            flow_img = Image.fromarray(flow_img)
+        # Flow 0 -> i
+        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, 0, i), '\r', end='')
+        image1 = video[0, None]
+        image2 = video[i, None]
+        flow = infer_flow(args, mode, '%05d_00000'%i, image1, image2, imgH, imgW, model, homography=False)
+        FlowNLB0 = np.concatenate((FlowNLB0, flow[..., None]), axis=-1)
+        # Flow nFrame // 2 -> i
+        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame // 2, i), '\r', end='')
+        image1 = video[nFrame // 2, None]
+        image2 = video[i, None]
+        flow = infer_flow(args, mode, '%05d_00001'%i, image1, image2, imgH, imgW, model, homography=False)
+        FlowNLB1 = np.concatenate((FlowNLB1, flow[..., None]), axis=-1)
+        # # Flow nFrame - 1 -> i
+        print("Calculating {0} flow {1:2d} <---> {2:2d}".format(mode, nFrame - 1, i), '\r', end='')
+        image1 = video[nFrame - 1, None]
+        image2 = video[i, None]
+        flow = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
+        FlowNLB2 = np.concatenate((FlowNLB2, flow[..., None]), axis=-1)
 
-            # Saves the flow and flow_img.
-            flow_img.save(os.path.join(args.outroot, 'flow', mode + '_png', '%05d.png'%i))
-            utils.frame_utils.writeFlow(os.path.join(args.outroot, 'flow', mode + '_flo', '%05d.flo'%i), flow)
-
-    return Flow
+    return FlowF, FlowB, np.stack((FlowNLF0, FlowNLF1, FlowNLF2), 3), np.stack((FlowNLB0, FlowNLB1, FlowNLB2), 3)
 
 
 def extrapolation(args, video_ori, corrFlowF_ori, corrFlowB_ori):
@@ -276,8 +469,7 @@ def video_completion(args):
     video = video.to('cuda')
 
     # Calcutes the corrupted flow.
-    corrFlowF = calculate_flow(args, RAFT_model, video, 'forward')
-    corrFlowB = calculate_flow(args, RAFT_model, video, 'backward')
+    corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB = calculate_flow(args, RAFT_model, video)
     print('\nFinish flow prediction.')
 
     # Makes sure video is in BGR (opencv) format.
@@ -399,8 +591,7 @@ def video_completion_seamless(args):
     video = video.to('cuda')
 
     # Calcutes the corrupted flow.
-    corrFlowF = calculate_flow(args, RAFT_model, video, 'forward')
-    corrFlowB = calculate_flow(args, RAFT_model, video, 'backward')
+    corrFlowF, corrFlowB, corrFlowNLF, corrFlowNLB = calculate_flow(args, RAFT_model, video)
     print('\nFinish flow prediction.')
 
     # Makes sure video is in BGR (opencv) format.

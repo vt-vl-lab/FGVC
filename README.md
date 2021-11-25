@@ -28,9 +28,8 @@ and the Python dependencies listed in requirements.txt
   ```
   conda create -n FGVC
   conda activate FGVC
-  conda install pytorch=1.6.0 torchvision=0.7.0 cudatoolkit=10.1 -c pytorch
-  conda install matplotlib scipy
-  pip install -r requirements.txt
+  conda install pytorch=1.6.0 torchvision=0.7.0 cudatoolkit=10.1 matplotlib scipy opencv -c pytorch
+  pip install imageio imageio-ffmpeg scikit-image imutils
   ```
 
 - Next, please download the model weight and demo data using the following command:
