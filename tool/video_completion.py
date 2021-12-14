@@ -217,6 +217,12 @@ def calculate_flow(args, model, video):
     FlowB = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
     FlowNLF = np.empty(((imgH, imgW, 2, 3, 0)), dtype=np.float32)
     FlowNLB = np.empty(((imgH, imgW, 2, 3, 0)), dtype=np.float32)
+    # FlowNLF0 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    # FlowNLF1 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    # FlowNLF2 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    # FlowNLB0 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    # FlowNLB1 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
+    # FlowNLB2 = np.empty(((imgH, imgW, 2, 0)), dtype=np.float32)
 
     if args.Nonlocal:
         mode_list = ['forward', 'backward', 'nonlocal_forward', 'nonlocal_backward']
@@ -287,7 +293,7 @@ def calculate_flow(args, model, video):
                     image2 = video[i, None]
                     FlowNLB2 = infer_flow(args, mode, '%05d_00002'%i, image1, image2, imgH, imgW, model, homography=False)
 
-                    FlowNLB = np.concatenate((FlowNLB, np.stack((FlowNLB0, FlowNLB1, FlowNLB1), -1)[..., None]), axis=-1)
+                    FlowNLB = np.concatenate((FlowNLB, np.stack((FlowNLB0, FlowNLB1, FlowNLB2), -1)[..., None]), axis=-1)
 
     return FlowF, FlowB, FlowNLF, FlowNLB
 
